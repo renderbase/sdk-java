@@ -1,0 +1,339 @@
+package com.renderbase.resources;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.renderbase.exceptions.RenderbaseException;
+import com.renderbase.exceptions.WebhookSignatureException;
+import com.renderbase.models.ListResponse;
+import com.renderbase.utils.HttpClient;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Resource for webhook operations and signature verification.
+ *
+ * <p>Use this resource to manage webhook subscriptions and verify incoming webhook signatures.</p>
+ *
+ * <h2>Signature Verification Example:</h2>
+ * <pre>{@code
+ * String payload = request.getBody();
+ * String signature = request.getHeader("X-Renderbase-Signature");
+ * String timestamp = request.getHeader("X-Renderbase-Timestamp");
+ *
+ * try {
+ *     client.webhooks().verifySignature(payload, signature, timestamp, webhookSecret);
+ *     // Signature is valid, process the webhook
+ * } catch (WebhookSignatureException e) {
+ *     // Invalid signature
+ *     response.setStatus(401);
+ * }
+ * }</pre>
+ *
+ * @since 1.0.0
+ */
+public class WebhooksResource {
+
+    private static final String HMAC_SHA256 = "HmacSHA256";
+    private static final long TIMESTAMP_TOLERANCE_SECONDS = 300; // 5 minutes
+
+    private final HttpClient httpClient;
+
+    public WebhooksResource(HttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
+
+    /**
+     * Lists webhook subscriptions.
+     *
+     * @return Paginated list of webhook subscriptions
+     * @throws RenderbaseException if the request fails
+     */
+    public ListResponse<WebhookSubscription> list() throws RenderbaseException {
+        return list(null, null);
+    }
+
+    /**
+     * Lists webhook subscriptions with pagination.
+     *
+     * @param page  Page number (1-based)
+     * @param limit Number of items per page
+     * @return Paginated list of webhook subscriptions
+     * @throws RenderbaseException if the request fails
+     */
+    public ListResponse<WebhookSubscription> list(Integer page, Integer limit) throws RenderbaseException {
+        Map<String, String> params = new HashMap<>();
+        if (page != null) {
+            params.put("page", page.toString());
+        }
+        if (limit != null) {
+            params.put("limit", limit.toString());
+        }
+
+        return httpClient.get("/webhook-subscriptions", params, new TypeReference<ListResponse<WebhookSubscription>>() {});
+    }
+
+    /**
+     * Gets a webhook subscription by ID.
+     *
+     * @param webhookId The webhook subscription ID
+     * @return The webhook subscription
+     * @throws RenderbaseException if the request fails
+     */
+    public WebhookSubscription get(String webhookId) throws RenderbaseException {
+        return httpClient.get("/webhook-subscriptions/" + webhookId, WebhookSubscription.class);
+    }
+
+    /**
+     * Creates a new webhook subscription.
+     *
+     * @param request The webhook subscription request
+     * @return The created webhook subscription
+     * @throws RenderbaseException if the request fails
+     */
+    public WebhookSubscription create(CreateWebhookRequest request) throws RenderbaseException {
+        return httpClient.post("/webhook-subscriptions", request, WebhookSubscription.class);
+    }
+
+    /**
+     * Updates a webhook subscription.
+     *
+     * @param webhookId The webhook subscription ID
+     * @param request   The update request
+     * @return The updated webhook subscription
+     * @throws RenderbaseException if the request fails
+     */
+    public WebhookSubscription update(String webhookId, UpdateWebhookRequest request) throws RenderbaseException {
+        return httpClient.put("/webhook-subscriptions/" + webhookId, request, WebhookSubscription.class);
+    }
+
+    /**
+     * Deletes a webhook subscription.
+     *
+     * @param webhookId The webhook subscription ID
+     * @throws RenderbaseException if the request fails
+     */
+    public void delete(String webhookId) throws RenderbaseException {
+        httpClient.delete("/webhook-subscriptions/" + webhookId);
+    }
+
+    /**
+     * Verifies a webhook signature.
+     *
+     * <p>This method validates that a webhook payload was sent by Renderbase
+     * and has not been tampered with.</p>
+     *
+     * @param payload   The raw request body
+     * @param signature The X-Renderbase-Signature header value
+     * @param timestamp The X-Renderbase-Timestamp header value
+     * @param secret    Your webhook signing secret
+     * @throws WebhookSignatureException if the signature is invalid or expired
+     */
+    public void verifySignature(String payload, String signature, String timestamp, String secret)
+            throws WebhookSignatureException {
+        if (payload == null || signature == null || timestamp == null || secret == null) {
+            throw new WebhookSignatureException("Missing required parameters for signature verification");
+        }
+
+        // Verify timestamp is within tolerance
+        long timestampSeconds;
+        try {
+            timestampSeconds = Long.parseLong(timestamp);
+        } catch (NumberFormatException e) {
+            throw new WebhookSignatureException("Invalid timestamp format");
+        }
+
+        long currentSeconds = System.currentTimeMillis() / 1000;
+        if (Math.abs(currentSeconds - timestampSeconds) > TIMESTAMP_TOLERANCE_SECONDS) {
+            throw new WebhookSignatureException("Timestamp is outside the tolerance window");
+        }
+
+        // Compute expected signature
+        String signedPayload = timestamp + "." + payload;
+        String expectedSignature = computeHmacSha256(signedPayload, secret);
+
+        // Parse signature header (format: "v1=signature")
+        String actualSignature = signature;
+        if (signature.startsWith("v1=")) {
+            actualSignature = signature.substring(3);
+        }
+
+        // Constant-time comparison to prevent timing attacks
+        if (!constantTimeEquals(expectedSignature, actualSignature)) {
+            throw new WebhookSignatureException("Signature verification failed");
+        }
+    }
+
+    /**
+     * Constructs a webhook event from the payload.
+     *
+     * <p>Use this after verifying the signature to parse the webhook event.</p>
+     *
+     * @param payload The raw request body
+     * @return The parsed webhook event
+     * @throws RenderbaseException if parsing fails
+     */
+    public WebhookEvent constructEvent(String payload) throws RenderbaseException {
+        try {
+            return httpClient.getObjectMapper().readValue(payload, WebhookEvent.class);
+        } catch (Exception e) {
+            throw new RenderbaseException("Failed to parse webhook event", e);
+        }
+    }
+
+    /**
+     * Verifies signature and constructs event in one call.
+     *
+     * @param payload   The raw request body
+     * @param signature The X-Renderbase-Signature header value
+     * @param timestamp The X-Renderbase-Timestamp header value
+     * @param secret    Your webhook signing secret
+     * @return The parsed webhook event
+     * @throws WebhookSignatureException if the signature is invalid
+     * @throws RenderbaseException       if parsing fails
+     */
+    public WebhookEvent constructEvent(String payload, String signature, String timestamp, String secret)
+            throws WebhookSignatureException, RenderbaseException {
+        verifySignature(payload, signature, timestamp, secret);
+        return constructEvent(payload);
+    }
+
+    private String computeHmacSha256(String data, String key) throws WebhookSignatureException {
+        try {
+            Mac mac = Mac.getInstance(HMAC_SHA256);
+            SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), HMAC_SHA256);
+            mac.init(secretKey);
+            byte[] hmacBytes = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return bytesToHex(hmacBytes);
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            throw new WebhookSignatureException("Failed to compute HMAC", e);
+        }
+    }
+
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        byte[] aBytes = a.getBytes(StandardCharsets.UTF_8);
+        byte[] bBytes = b.getBytes(StandardCharsets.UTF_8);
+
+        if (aBytes.length != bBytes.length) {
+            return false;
+        }
+
+        int result = 0;
+        for (int i = 0; i < aBytes.length; i++) {
+            result |= aBytes[i] ^ bBytes[i];
+        }
+        return result == 0;
+    }
+
+    // Inner classes for webhook-related models
+
+    /**
+     * Webhook subscription.
+     */
+    public static class WebhookSubscription {
+        private String id;
+        private String url;
+        private String[] events;
+        private boolean active;
+        private String secret;
+        private String createdAt;
+        private String updatedAt;
+
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String[] getEvents() { return events; }
+        public void setEvents(String[] events) { this.events = events; }
+        public boolean isActive() { return active; }
+        public void setActive(boolean active) { this.active = active; }
+        public String getSecret() { return secret; }
+        public void setSecret(String secret) { this.secret = secret; }
+        public String getCreatedAt() { return createdAt; }
+        public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
+        public String getUpdatedAt() { return updatedAt; }
+        public void setUpdatedAt(String updatedAt) { this.updatedAt = updatedAt; }
+    }
+
+    /**
+     * Request to create a webhook subscription.
+     */
+    public static class CreateWebhookRequest {
+        private String url;
+        private String[] events;
+
+        public CreateWebhookRequest() {}
+
+        public CreateWebhookRequest(String url, String[] events) {
+            this.url = url;
+            this.events = events;
+        }
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String[] getEvents() { return events; }
+        public void setEvents(String[] events) { this.events = events; }
+    }
+
+    /**
+     * Request to update a webhook subscription.
+     */
+    public static class UpdateWebhookRequest {
+        private String url;
+        private String[] events;
+        private Boolean active;
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+        public String[] getEvents() { return events; }
+        public void setEvents(String[] events) { this.events = events; }
+        public Boolean getActive() { return active; }
+        public void setActive(Boolean active) { this.active = active; }
+    }
+
+    /**
+     * Webhook event payload.
+     */
+    public static class WebhookEvent {
+        private String id;
+        private String type;
+        private String createdAt;
+        private Object data;
+
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public String getCreatedAt() { return createdAt; }
+        public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
+        public Object getData() { return data; }
+        public void setData(Object data) { this.data = data; }
+
+        /**
+         * Gets the event data cast to a specific type.
+         *
+         * @param <T>  The expected type
+         * @param type The class to cast to
+         * @return The data cast to the specified type
+         */
+        @SuppressWarnings("unchecked")
+        public <T> T getDataAs(Class<T> type) {
+            return (T) data;
+        }
+    }
+}
