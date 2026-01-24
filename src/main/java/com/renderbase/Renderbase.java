@@ -1,5 +1,7 @@
 package com.renderbase;
 
+import com.renderbase.exceptions.RenderbaseException;
+import com.renderbase.models.User;
 import com.renderbase.resources.DocumentsResource;
 import com.renderbase.resources.TemplatesResource;
 import com.renderbase.resources.WebhooksResource;
@@ -102,6 +104,31 @@ public class Renderbase {
      */
     public WebhooksResource webhooks() {
         return webhooks;
+    }
+
+    /**
+     * Gets the current authenticated user.
+     *
+     * @return The authenticated user
+     * @throws RenderbaseException if the request fails
+     */
+    public User me() throws RenderbaseException {
+        String authUrl = httpClient.getBaseUrlWithoutVersion() + "/api/auth/verify";
+        return httpClient.getAbsolute(authUrl, User.class);
+    }
+
+    /**
+     * Verifies if the API key is valid.
+     *
+     * @return true if the API key is valid, false otherwise
+     */
+    public boolean verifyApiKey() {
+        try {
+            me();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**

@@ -172,6 +172,29 @@ public class HttpClient {
     }
 
     /**
+     * Makes a PATCH request.
+     */
+    public <T> T patch(String path, Object body, Class<T> responseType) throws RenderbaseException {
+        try {
+            String jsonBody = objectMapper.writeValueAsString(body);
+            RequestBody requestBody = RequestBody.create(jsonBody, JSON);
+
+            Request request = new Request.Builder()
+                    .url(baseUrl + path)
+                    .patch(requestBody)
+                    .addHeader("Authorization", "Bearer " + apiKey)
+                    .addHeader("User-Agent", USER_AGENT)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Accept", "application/json")
+                    .build();
+
+            return execute(request, responseType);
+        } catch (IOException e) {
+            throw new RenderbaseException("Failed to serialize request body", e);
+        }
+    }
+
+    /**
      * Makes a DELETE request.
      */
     public void delete(String path) throws RenderbaseException {
@@ -183,6 +206,31 @@ public class HttpClient {
                 .build();
 
         executeVoid(request);
+    }
+
+    /**
+     * Makes a GET request to an absolute URL (not relative to base URL).
+     */
+    public <T> T getAbsolute(String absoluteUrl, Class<T> responseType) throws RenderbaseException {
+        Request request = new Request.Builder()
+                .url(absoluteUrl)
+                .get()
+                .addHeader("Authorization", "Bearer " + apiKey)
+                .addHeader("User-Agent", USER_AGENT)
+                .addHeader("Accept", "application/json")
+                .build();
+
+        return execute(request, responseType);
+    }
+
+    /**
+     * Gets the base URL without the /api/v1 suffix (for auth endpoints).
+     */
+    public String getBaseUrlWithoutVersion() {
+        if (baseUrl.endsWith("/api/v1")) {
+            return baseUrl.substring(0, baseUrl.length() - 7);
+        }
+        return baseUrl;
     }
 
     private <T> T execute(Request request, Class<T> responseType) throws RenderbaseException {

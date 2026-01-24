@@ -2,6 +2,9 @@ package com.renderbase;
 
 import com.renderbase.exceptions.RenderbaseException;
 import com.renderbase.models.*;
+import com.renderbase.resources.WebhooksResource.CreateWebhookRequest;
+import com.renderbase.resources.WebhooksResource.UpdateWebhookRequest;
+import com.renderbase.resources.WebhooksResource.WebhookSubscription;
 
 import java.util.*;
 
@@ -76,7 +79,7 @@ public class IntegrationTest {
         // ==========================================
 
         test("client.me() - Get authenticated user", () -> {
-            User user = client.me();
+            com.renderbase.models.User user = client.me();
             if (user.getId() == null || user.getEmail() == null) {
                 throw new Exception("Invalid user response");
             }
@@ -84,8 +87,8 @@ public class IntegrationTest {
         });
 
         test("client.verifyApiKey() - Verify API key is valid", () -> {
-            VerifyResult result = client.verifyApiKey();
-            if (!result.isValid()) {
+            boolean result = client.verifyApiKey();
+            if (!result) {
                 throw new Exception("API key verification failed");
             }
         });
@@ -254,7 +257,8 @@ public class IntegrationTest {
             WebhookSubscription webhook = client.webhooks().create(
                 new CreateWebhookRequest(
                     "https://webhook.site/test-renderbase-java-sdk",
-                    new String[]{"document.completed", "document.failed"}
+                    new String[]{"document.generated", "document.failed"},
+                    "SDK Integration Test Webhook (Java)"
                 )
             );
 
@@ -278,12 +282,12 @@ public class IntegrationTest {
 
             test("webhooks.update() - Update webhook", () -> {
                 UpdateWebhookRequest update = new UpdateWebhookRequest();
-                update.setName("SDK Integration Test Webhook (Java - Updated)");
+                update.setDescription("SDK Integration Test Webhook (Java - Updated)");
                 WebhookSubscription webhook = client.webhooks().update(webhookId, update);
                 if (webhook.getId() == null) {
                     throw new Exception("Invalid webhook response");
                 }
-                System.out.println("  Updated name: " + webhook.getName());
+                System.out.println("  Updated description: " + webhook.getDescription());
             });
 
             test("webhooks.delete() - Delete webhook", () -> {
@@ -356,54 +360,5 @@ public class IntegrationTest {
             this.passed = passed;
             this.error = error;
         }
-    }
-
-    // Model classes (simplified for integration test)
-    static class User {
-        private String id;
-        private String email;
-        public String getId() { return id; }
-        public String getEmail() { return email; }
-    }
-
-    static class VerifyResult {
-        private boolean valid;
-        public boolean isValid() { return valid; }
-    }
-
-    static class CreateWebhookRequest {
-        private String url;
-        private String[] events;
-        public CreateWebhookRequest(String url, String[] events) {
-            this.url = url;
-            this.events = events;
-        }
-    }
-
-    static class UpdateWebhookRequest {
-        private String name;
-        private Boolean active;
-        public void setName(String name) { this.name = name; }
-        public void setActive(Boolean active) { this.active = active; }
-    }
-
-    static class WebhookSubscription {
-        private String id;
-        private String url;
-        private String secret;
-        private String name;
-        public String getId() { return id; }
-        public String getUrl() { return url; }
-        public String getSecret() { return secret; }
-        public String getName() { return name; }
-    }
-
-    static class TemplateVariable {
-        private String name;
-        private String type;
-        private Object defaultValue;
-        public String getName() { return name; }
-        public String getType() { return type; }
-        public Object getDefaultValue() { return defaultValue; }
     }
 }

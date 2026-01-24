@@ -108,7 +108,7 @@ public class WebhooksResource {
      * @throws RenderbaseException if the request fails
      */
     public WebhookSubscription update(String webhookId, UpdateWebhookRequest request) throws RenderbaseException {
-        return httpClient.put("/webhook-subscriptions/" + webhookId, request, WebhookSubscription.class);
+        return httpClient.patch("/webhook-subscriptions/" + webhookId, request, WebhookSubscription.class);
     }
 
     /**
@@ -249,7 +249,8 @@ public class WebhooksResource {
         private String id;
         private String url;
         private String[] events;
-        private boolean active;
+        private String description;
+        private boolean isActive;
         private String secret;
         private String createdAt;
         private String updatedAt;
@@ -260,8 +261,10 @@ public class WebhooksResource {
         public void setUrl(String url) { this.url = url; }
         public String[] getEvents() { return events; }
         public void setEvents(String[] events) { this.events = events; }
-        public boolean isActive() { return active; }
-        public void setActive(boolean active) { this.active = active; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public boolean isActive() { return isActive; }
+        public void setActive(boolean isActive) { this.isActive = isActive; }
         public String getSecret() { return secret; }
         public void setSecret(String secret) { this.secret = secret; }
         public String getCreatedAt() { return createdAt; }
@@ -276,6 +279,7 @@ public class WebhooksResource {
     public static class CreateWebhookRequest {
         private String url;
         private String[] events;
+        private String description;
 
         public CreateWebhookRequest() {}
 
@@ -284,26 +288,34 @@ public class WebhooksResource {
             this.events = events;
         }
 
+        public CreateWebhookRequest(String url, String[] events, String description) {
+            this.url = url;
+            this.events = events;
+            this.description = description;
+        }
+
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
         public String[] getEvents() { return events; }
         public void setEvents(String[] events) { this.events = events; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
     }
 
     /**
      * Request to update a webhook subscription.
      */
     public static class UpdateWebhookRequest {
-        private String url;
         private String[] events;
-        private Boolean active;
+        private String description;
+        private Boolean isActive;
 
-        public String getUrl() { return url; }
-        public void setUrl(String url) { this.url = url; }
         public String[] getEvents() { return events; }
         public void setEvents(String[] events) { this.events = events; }
-        public Boolean getActive() { return active; }
-        public void setActive(Boolean active) { this.active = active; }
+        public String getDescription() { return description; }
+        public void setDescription(String description) { this.description = description; }
+        public Boolean getIsActive() { return isActive; }
+        public void setIsActive(Boolean isActive) { this.isActive = isActive; }
     }
 
     /**
